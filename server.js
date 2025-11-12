@@ -1,11 +1,12 @@
 /* ==========================================================
-   ✅ CFC_LOCK_PROXY_V62.0_BACK2FRONT_FIRESTORE_UPDATE
+   ✅ CFC_LOCK_PROXY_V63.0_FIRESTORE_CREDENTIAL_FIX
    Sistema: Campus CFC LITE V41-DEMO
    ========================================================== */
 
 import express from "express";
 import admin from "firebase-admin";
 import cors from "cors";
+import { readFileSync } from "fs";
 
 const app = express();
 app.use(express.json());
@@ -14,24 +15,31 @@ app.use(cors());
 const PORT = process.env.PORT || 10000;
 
 /* ==========================================================
-   🔹 Inicialización segura Firebase Admin
+   🔹 Inicialización segura Firebase Admin (con credenciales locales)
    ========================================================== */
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
-}
-const db = admin.firestore();
+try {
+  const serviceAccount = JSON.parse(
+    readFileSync("/etc/secrets/firebase-key.json", "utf8")
+  );
 
-console.log("🟢 Firebase Admin inicializado (Render Secure Mode)");
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+
+  console.log("🟢 Firebase Admin inicializado (Service Account)");
+} catch (err) {
+  console.error("❌ Error al inicializar Firebase Admin:", err);
+}
+
+const db = admin.firestore();
 
 /* ==========================================================
    🧠 Estado de sesiones en memoria
    ========================================================== */
-const sessions = new Map(); // email → device_id
+const sessions = new Map();
 
 /* ==========================================================
-   🔹 Login handler
+   🔹 /login — Registrar y cerrar duplicados
    ========================================================== */
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
@@ -40,7 +48,6 @@ app.post("/login", async (req, res) => {
   if (prevDevice && prevDevice !== device_id) {
     console.log(`🚨 Duplicado detectado para ${email}`);
 
-    // 🔥 Cerrar sesión anterior en Firestore
     try {
       await db.collection("licenses").doc(email).set(
         {
@@ -55,19 +62,18 @@ app.post("/login", async (req, res) => {
     }
   }
 
-  // Registrar nueva sesión
   sessions.set(email, device_id);
   res.json({ status: "ok" });
 });
 
 /* ==========================================================
-   🔹 Check session
+   🔹 /check-session — Validación remota
    ========================================================== */
 app.get("/check-session", (req, res) => {
   const { email, device_id } = req.query;
   const current = sessions.get(email);
 
-  if (!current) return res.json({ status: "invalid", reason: "not_logged_in" });
+  if (!current) return res.json({ status: "invalid" });
   if (current !== device_id) {
     console.log(`🚨 Sesión expirada: ${email}`);
     return res.json({ status: "expired" });
@@ -77,23 +83,17 @@ app.get("/check-session", (req, res) => {
 });
 
 /* ==========================================================
-   💓 Heartbeat
+   💓 /heartbeat — Mantener activa
    ========================================================== */
 app.post("/heartbeat", (req, res) => {
   const { email, device_id } = req.body;
   const current = sessions.get(email);
 
-  if (!current) {
-    console.log(`⚠️ Heartbeat sin sesión activa: ${email}`);
+  if (!current || current !== device_id) {
+    console.log(`🚨 Heartbeat duplicado: ${email}`);
     return res.json({ status: "expired" });
   }
 
-  if (current !== device_id) {
-    console.log(`🚨 Heartbeat detectó duplicado: ${email}`);
-    return res.json({ status: "expired" });
-  }
-
-  sessions.set(email, device_id);
   console.log(`♻️ Sesión renovada (${device_id})`);
   return res.json({ status: "ok" });
 });
@@ -101,6 +101,6 @@ app.post("/heartbeat", (req, res) => {
 /* ==========================================================
    🚀 Servidor
    ========================================================== */
-app.listen(PORT, () => {
-  console.log(`⚡ CFC Lock Proxy V62 activo en puerto ${PORT}`);
-});
+app.listen(PORT, "0.0.0.0", () =>
+  console.log(`⚡ CFC Lock Proxy V63 activo en puerto ${PORT}`)
+);
