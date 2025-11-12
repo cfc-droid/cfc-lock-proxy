@@ -1,149 +1,106 @@
-// ✅ CFC_LOCK_PROXY_SERVER_V60.0_RENDER_FORCE_SINGLE_SESSION
-// Backend: Node + Express + Firebase
-// Función: Control real de sesión única cross-device
-// QA-SYNC — 2025-11-12
+/* ==========================================================
+   ✅ CFC_LOCK_PROXY_V62.0_BACK2FRONT_FIRESTORE_UPDATE
+   Sistema: Campus CFC LITE V41-DEMO
+   ========================================================== */
 
 import express from "express";
-import cors from "cors";
 import admin from "firebase-admin";
-import { readFileSync } from "fs";
+import cors from "cors";
 
 const app = express();
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
-// 🔐 Inicializar Firebase Admin
-try {
-  const serviceAccount = JSON.parse(
-    readFileSync("/etc/secrets/firebase-key.json", "utf8")
-  );
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-  console.log("🟢 Firebase Admin inicializado (Render Secure Mode)");
-} catch (err) {
-  console.error("❌ Error al inicializar Firebase Admin:", err);
-}
-
-const db = admin.firestore();
+const PORT = process.env.PORT || 10000;
 
 /* ==========================================================
-   🔹 /login — registra nuevo dispositivo y desactiva el anterior
+   🔹 Inicialización segura Firebase Admin
+   ========================================================== */
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+  });
+}
+const db = admin.firestore();
+
+console.log("🟢 Firebase Admin inicializado (Render Secure Mode)");
+
+/* ==========================================================
+   🧠 Estado de sesiones en memoria
+   ========================================================== */
+const sessions = new Map(); // email → device_id
+
+/* ==========================================================
+   🔹 Login handler
    ========================================================== */
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
-  if (!email || !device_id)
-    return res.status(400).json({ error: "missing body" });
+  const prevDevice = sessions.get(email);
 
-  try {
-    const ref = db.collection("licenses").doc(email);
-    const snap = await ref.get();
+  if (prevDevice && prevDevice !== device_id) {
+    console.log(`🚨 Duplicado detectado para ${email}`);
 
-    if (!snap.exists) {
-      // Primer inicio
-      await ref.set({
-        email,
-        device_id,
-        active_session: true,
-        last_active: new Date(),
-      });
-      console.log(`🆕 Nueva sesión creada para ${email}`);
-      return res.json({ ok: true });
+    // 🔥 Cerrar sesión anterior en Firestore
+    try {
+      await db.collection("licenses").doc(email).set(
+        {
+          active_session: false,
+          last_active: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      console.log(`⚡ Firestore actualizado (active_session=false) para ${email}`);
+    } catch (err) {
+      console.error("❌ Error al actualizar Firestore:", err);
     }
-
-    const data = snap.data();
-
-    // Si es el mismo dispositivo, solo refrescar
-    if (data.device_id === device_id) {
-      await ref.update({
-        active_session: true,
-        last_active: new Date(),
-      });
-      console.log(`♻️ Sesión renovada (${device_id})`);
-      return res.json({ ok: true });
-    }
-
-    // Si es otro dispositivo, reemplazar y marcar cambio
-    await ref.update({
-      device_id,
-      active_session: true,
-      session_changed_at: new Date(),
-    });
-
-    console.log(`⚠️ Nuevo dispositivo detectado para ${email}. Anterior cerrado.`);
-    return res.json({ ok: true, replaced: true });
-  } catch (err) {
-    console.error("⚠️ Error en /login:", err);
-    res.status(500).json({ error: "server error" });
   }
+
+  // Registrar nueva sesión
+  sessions.set(email, device_id);
+  res.json({ status: "ok" });
 });
 
 /* ==========================================================
-   🔹 /check-session — valida si la sesión sigue activa
+   🔹 Check session
    ========================================================== */
-app.get("/check-session", async (req, res) => {
+app.get("/check-session", (req, res) => {
   const { email, device_id } = req.query;
-  if (!email || !device_id)
-    return res.status(400).json({ error: "missing params" });
+  const current = sessions.get(email);
 
-  try {
-    const ref = db.collection("licenses").doc(email);
-    const snap = await ref.get();
-    if (!snap.exists)
-      return res.json({ status: "invalid", reason: "no license" });
-
-    const data = snap.data();
-
-    // Verificar si coincide el device_id
-    if (data.device_id === device_id && data.active_session) {
-      return res.json({ status: "valid" });
-    } else {
-      console.log(`🚨 Sesión inválida detectada (${email})`);
-      return res.json({ status: "invalid" });
-    }
-  } catch (err) {
-    console.error("⚠️ Error en /check-session:", err);
-    res.status(500).json({ error: "server error" });
+  if (!current) return res.json({ status: "invalid", reason: "not_logged_in" });
+  if (current !== device_id) {
+    console.log(`🚨 Sesión expirada: ${email}`);
+    return res.json({ status: "expired" });
   }
+
+  return res.json({ status: "valid" });
 });
 
 /* ==========================================================
-   💓 /heartbeat — detecta expiración remota y responde “expired”
+   💓 Heartbeat
    ========================================================== */
-app.post("/heartbeat", async (req, res) => {
+app.post("/heartbeat", (req, res) => {
   const { email, device_id } = req.body;
-  if (!email || !device_id)
-    return res.status(400).json({ error: "missing body" });
+  const current = sessions.get(email);
 
-  try {
-    const ref = db.collection("licenses").doc(email);
-    const snap = await ref.get();
-
-    if (!snap.exists) return res.json({ status: "invalid" });
-
-    const data = snap.data();
-
-    if (data.device_id !== device_id) {
-      console.log(`🚨 Sesión expirada: ${email} (${device_id})`);
-      return res.json({ status: "expired" });
-    }
-
-    await ref.update({
-      last_active: new Date(),
-      active_session: true,
-    });
-
-    res.json({ status: "valid" });
-  } catch (err) {
-    console.error("⚠️ Error en /heartbeat:", err);
-    res.status(500).json({ error: "server error" });
+  if (!current) {
+    console.log(`⚠️ Heartbeat sin sesión activa: ${email}`);
+    return res.json({ status: "expired" });
   }
+
+  if (current !== device_id) {
+    console.log(`🚨 Heartbeat detectó duplicado: ${email}`);
+    return res.json({ status: "expired" });
+  }
+
+  sessions.set(email, device_id);
+  console.log(`♻️ Sesión renovada (${device_id})`);
+  return res.json({ status: "ok" });
 });
 
 /* ==========================================================
-   🔄 Servidor Render
+   🚀 Servidor
    ========================================================== */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V60 activo en puerto ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`⚡ CFC Lock Proxy V62 activo en puerto ${PORT}`);
+});
