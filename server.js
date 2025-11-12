@@ -1,5 +1,5 @@
 /* ==========================================================
-   ✅ CFC_LOCK_PROXY_V65.0_FIRESTORE_PROJECT_FIX
+   ✅ CFC_LOCK_PROXY_V66.0_FIRESTORE_ENV_FIX
    Sistema: Campus CFC LITE V41-DEMO
    ========================================================== */
 
@@ -13,9 +13,10 @@ app.use(express.json());
 app.use(cors());
 
 const PORT = process.env.PORT || 10000;
+const PROJECT_ID = process.env.PROJECT_ID || "cfc-lock-firebase";
 
 /* ==========================================================
-   🔹 Inicialización segura Firebase Admin (con projectId manual)
+   🔹 Inicialización segura Firebase Admin
    ========================================================== */
 let db;
 try {
@@ -25,26 +26,25 @@ try {
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    projectId: serviceAccount.project_id || "cfc-lock-firebase",
+    projectId: PROJECT_ID,
   });
 
   db = admin.firestore();
-  console.log("🟢 Firebase Admin inicializado (con projectId manual)");
+  console.log("🟢 Firebase Admin inicializado correctamente (Render ENV)");
 } catch (err) {
   console.error("❌ Error al inicializar Firebase Admin:", err);
 }
 
 /* ==========================================================
-   🧠 Estado local de sesiones (email → device_id)
+   🧠 Estado de sesiones locales
    ========================================================== */
 const sessions = new Map();
 
 /* ==========================================================
-   🔹 /login — Detecta duplicado y fuerza cierre anterior
+   🔹 /login — Detectar duplicados y forzar cierre anterior
    ========================================================== */
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
-
   if (!email || !device_id)
     return res.status(400).json({ error: "missing data" });
 
@@ -54,8 +54,7 @@ app.post("/login", async (req, res) => {
     console.log(`🚨 Duplicado detectado para ${email}`);
 
     try {
-      const ref = db.collection("licenses").doc(email);
-      await ref.set(
+      await db.collection("licenses").doc(email).set(
         {
           active_session: false,
           session_force_closed: true,
@@ -63,7 +62,7 @@ app.post("/login", async (req, res) => {
         },
         { merge: true }
       );
-      console.log(`⚡ Firestore actualizado: active_session=false`);
+      console.log(`⚡ Firestore actualizado correctamente para ${email}`);
     } catch (err) {
       console.error("❌ Error al actualizar Firestore:", err);
     }
@@ -74,11 +73,10 @@ app.post("/login", async (req, res) => {
 });
 
 /* ==========================================================
-   🔹 /check-session — Verifica si la sesión sigue activa
+   🔹 /check-session — Validar sesión
    ========================================================== */
 app.get("/check-session", async (req, res) => {
   const { email, device_id } = req.query;
-
   if (!email || !device_id)
     return res.status(400).json({ error: "missing params" });
 
@@ -89,13 +87,11 @@ app.get("/check-session", async (req, res) => {
 
     const data = snap.data();
 
-    // Si Firestore marca sesión forzada cerrada
     if (data.session_force_closed === true) {
-      console.log(`🚨 Sesión forzada a cerrar (${email})`);
+      console.log(`🚨 Sesión forzada cerrada (${email})`);
       return res.json({ status: "expired" });
     }
 
-    // Si el device no coincide
     if (data.device_id && data.device_id !== device_id) {
       return res.json({ status: "expired" });
     }
@@ -127,5 +123,5 @@ app.post("/heartbeat", (req, res) => {
    🚀 Servidor
    ========================================================== */
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V65 activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy V66 activo en puerto ${PORT}`)
 );
