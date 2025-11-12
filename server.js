@@ -1,88 +1,76 @@
-// ==========================================================
-// ✅ CFC_LOCK_PROXY_SERVER_V57.5_RENDER_READY
-// Backend Node.js + Express + Firebase
-// Función: Maneja sesiones únicas + heartbeats del Campus CFC
+// ✅ CFC_LOCK_PROXY_SERVER_V57.6_RENDER_SECURE
+// Backend: Node + Express + Firebase
+// Función: Manejo de sesiones únicas + heartbeats del Campus CFC
 // Auditoría QA-SYNC — 2025-11-12
-// ==========================================================
 
 import express from "express";
 import cors from "cors";
 import admin from "firebase-admin";
+import { readFileSync } from "fs";
 
-// ==========================================================
-// 🔹 Inicialización de Express
-// ==========================================================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ==========================================================
-// 🔹 Inicialización de Firebase Admin
-// ==========================================================
-if (!admin.apps.length) {
+// 🔐 Inicializar Firebase Admin SDK (clave desde Secret File)
+try {
+  const serviceAccount = JSON.parse(
+    readFileSync("/etc/secrets/firebase-key.json", "utf8")
+  );
   admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
+    credential: admin.credential.cert(serviceAccount),
   });
+  console.log("🟢 Firebase Admin inicializado (Render Secure Mode)");
+} catch (err) {
+  console.error("❌ Error al inicializar Firebase Admin:", err);
 }
+
 const db = admin.firestore();
 
-// ==========================================================
-// 🔍 Endpoint principal — Verifica si el dispositivo sigue válido
-// ==========================================================
+// ✅ Endpoint principal: verificar sesión
 app.get("/check-session", async (req, res) => {
-  try {
-    const { email, device_id } = req.query;
-    if (!email || !device_id)
-      return res.status(400).json({ error: "Missing params" });
+  const { email, device_id } = req.query;
+  if (!email || !device_id)
+    return res.status(400).json({ error: "missing params" });
 
+  try {
     const ref = db.collection("licenses").doc(email);
     const snap = await ref.get();
-    if (!snap.exists) return res.json({ status: "invalid" });
+    if (!snap.exists)
+      return res.json({ status: "invalid", reason: "no license" });
 
     const data = snap.data();
-    const status = data.device_id === device_id ? "valid" : "invalid";
-    res.json({ status });
+    const valid = data.device_id === device_id && data.active_session;
+    res.json({ status: valid ? "valid" : "invalid" });
   } catch (err) {
-    console.error("❌ Error en /check-session:", err);
-    res.status(500).json({ error: "Server error" });
+    console.error("⚠️ Error en /check-session:", err);
+    res.status(500).json({ error: "server error" });
   }
 });
 
-// ==========================================================
-// 💓 Endpoint secundario — Registra heartbeats
-// ==========================================================
+// ✅ Endpoint secundario: registrar heartbeats
 app.post("/heartbeat", async (req, res) => {
-  try {
-    const { email, device_id } = req.body;
-    if (!email || !device_id)
-      return res.status(400).json({ error: "Missing body" });
+  const { email, device_id } = req.body;
+  if (!email || !device_id)
+    return res.status(400).json({ error: "missing body" });
 
-    const ref = db.collection("licenses").doc(email);
-    await ref.set(
+  try {
+    await db.collection("licenses").doc(email).set(
       {
         device_id,
         last_active: new Date(),
-        active: true,
       },
       { merge: true }
     );
-
     res.json({ ok: true });
   } catch (err) {
-    console.error("❌ Error en /heartbeat:", err);
-    res.status(500).json({ error: "Server error" });
+    console.error("⚠️ Error en /heartbeat:", err);
+    res.status(500).json({ error: "server error" });
   }
 });
 
-// ==========================================================
-// 🩺 Healthcheck (Render usa esto para monitorear el servicio)
-// ==========================================================
-app.get("/healthz", (req, res) => res.status(200).send("ok"));
-
-// ==========================================================
-// 🚀 Iniciar servidor
-// ==========================================================
-const PORT = process.env.PORT || 3000;
+// 🔄 Servidor Render
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
-  console.log(`✅ CFC Lock Proxy activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy activo en puerto ${PORT}`)
 );
