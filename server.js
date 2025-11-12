@@ -1,4 +1,4 @@
-// ✅ CFC_LOCK_PROXY_SERVER_V57.6_RENDER_SECURE
+// ✅ CFC_LOCK_PROXY_SERVER_V57.8_RENDER_FIX_BINDING
 // Backend: Node + Express + Firebase
 // Función: Manejo de sesiones únicas + heartbeats del Campus CFC
 // Auditoría QA-SYNC — 2025-11-12
@@ -36,11 +36,13 @@ app.get("/check-session", async (req, res) => {
   try {
     const ref = db.collection("licenses").doc(email);
     const snap = await ref.get();
+
     if (!snap.exists)
       return res.json({ status: "invalid", reason: "no license" });
 
     const data = snap.data();
     const valid = data.device_id === device_id && data.active_session;
+
     res.json({ status: valid ? "valid" : "invalid" });
   } catch (err) {
     console.error("⚠️ Error en /check-session:", err);
@@ -69,8 +71,9 @@ app.post("/heartbeat", async (req, res) => {
   }
 });
 
-// 🔄 Servidor Render
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () =>
-  console.log(`⚡ CFC Lock Proxy activo en puerto ${PORT}`)
+// 🔄 Servidor Render (corregido)
+// Se elimina el fallback y se fuerza escucha en "0.0.0.0" para evitar loop de “Application Loading”
+const PORT = process.env.PORT;
+app.listen(PORT, "0.0.0.0", () =>
+  console.log(`⚡ CFC Lock Proxy activo y escuchando en puerto ${PORT}`)
 );
