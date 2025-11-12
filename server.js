@@ -1,6 +1,6 @@
-// ✅ CFC_LOCK_PROXY_SERVER_V59.0_RENDER_UNIQUE_SESSION_FINAL
+// ✅ CFC_LOCK_PROXY_SERVER_V60.0_RENDER_FORCE_SINGLE_SESSION
 // Backend: Node + Express + Firebase
-// Función: Sesión única cross-device (expulsa anteriores)
+// Función: Control real de sesión única cross-device
 // QA-SYNC — 2025-11-12
 
 import express from "express";
@@ -12,7 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔐 Inicializar Firebase Admin SDK
+// 🔐 Inicializar Firebase Admin
 try {
   const serviceAccount = JSON.parse(
     readFileSync("/etc/secrets/firebase-key.json", "utf8")
@@ -28,7 +28,7 @@ try {
 const db = admin.firestore();
 
 /* ==========================================================
-   🔹 Endpoint: registrar login y forzar sesión única
+   🔹 /login — registra nuevo dispositivo y desactiva el anterior
    ========================================================== */
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
@@ -40,35 +40,38 @@ app.post("/login", async (req, res) => {
     const snap = await ref.get();
 
     if (!snap.exists) {
-      // Primera vez → crear licencia nueva
+      // Primer inicio
       await ref.set({
         email,
         device_id,
         active_session: true,
         last_active: new Date(),
       });
-      console.log(`🆕 Nueva licencia creada: ${email}`);
-    } else {
-      const data = snap.data();
-
-      // Si el dispositivo es diferente, invalida la sesión anterior
-      if (data.device_id && data.device_id !== device_id) {
-        console.log(`⚠️ Dispositivo cambiado para ${email}. Cerrando anterior.`);
-        await ref.update({
-          device_id,
-          active_session: true,
-          last_active: new Date(),
-        });
-      } else {
-        // Mismo dispositivo → refresca timestamp
-        await ref.update({
-          active_session: true,
-          last_active: new Date(),
-        });
-      }
+      console.log(`🆕 Nueva sesión creada para ${email}`);
+      return res.json({ ok: true });
     }
 
-    res.json({ ok: true });
+    const data = snap.data();
+
+    // Si es el mismo dispositivo, solo refrescar
+    if (data.device_id === device_id) {
+      await ref.update({
+        active_session: true,
+        last_active: new Date(),
+      });
+      console.log(`♻️ Sesión renovada (${device_id})`);
+      return res.json({ ok: true });
+    }
+
+    // Si es otro dispositivo, reemplazar y marcar cambio
+    await ref.update({
+      device_id,
+      active_session: true,
+      session_changed_at: new Date(),
+    });
+
+    console.log(`⚠️ Nuevo dispositivo detectado para ${email}. Anterior cerrado.`);
+    return res.json({ ok: true, replaced: true });
   } catch (err) {
     console.error("⚠️ Error en /login:", err);
     res.status(500).json({ error: "server error" });
@@ -76,7 +79,7 @@ app.post("/login", async (req, res) => {
 });
 
 /* ==========================================================
-   🔹 Endpoint: verificar sesión
+   🔹 /check-session — valida si la sesión sigue activa
    ========================================================== */
 app.get("/check-session", async (req, res) => {
   const { email, device_id } = req.query;
@@ -90,9 +93,14 @@ app.get("/check-session", async (req, res) => {
       return res.json({ status: "invalid", reason: "no license" });
 
     const data = snap.data();
-    const valid = data.device_id === device_id && data.active_session;
 
-    res.json({ status: valid ? "valid" : "invalid" });
+    // Verificar si coincide el device_id
+    if (data.device_id === device_id && data.active_session) {
+      return res.json({ status: "valid" });
+    } else {
+      console.log(`🚨 Sesión inválida detectada (${email})`);
+      return res.json({ status: "invalid" });
+    }
   } catch (err) {
     console.error("⚠️ Error en /check-session:", err);
     res.status(500).json({ error: "server error" });
@@ -100,7 +108,7 @@ app.get("/check-session", async (req, res) => {
 });
 
 /* ==========================================================
-   💓 Endpoint: heartbeat (mantiene viva la sesión)
+   💓 /heartbeat — detecta expiración remota y responde “expired”
    ========================================================== */
 app.post("/heartbeat", async (req, res) => {
   const { email, device_id } = req.body;
@@ -115,9 +123,8 @@ app.post("/heartbeat", async (req, res) => {
 
     const data = snap.data();
 
-    // Si cambió el device_id → sesión expirada
     if (data.device_id !== device_id) {
-      console.log(`🚨 Sesión expirada para ${email} (${device_id})`);
+      console.log(`🚨 Sesión expirada: ${email} (${device_id})`);
       return res.json({ status: "expired" });
     }
 
@@ -126,7 +133,7 @@ app.post("/heartbeat", async (req, res) => {
       active_session: true,
     });
 
-    res.json({ ok: true, status: "valid" });
+    res.json({ status: "valid" });
   } catch (err) {
     console.error("⚠️ Error en /heartbeat:", err);
     res.status(500).json({ error: "server error" });
@@ -138,5 +145,5 @@ app.post("/heartbeat", async (req, res) => {
    ========================================================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy V60 activo en puerto ${PORT}`)
 );
