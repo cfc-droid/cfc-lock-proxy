@@ -1,5 +1,5 @@
 /* ==========================================================
-   ✅ CFC_LOCK_PROXY_V64.0_FIRESTORE_DIRECT_WRITE_FIX
+   ✅ CFC_LOCK_PROXY_V65.0_FIRESTORE_PROJECT_FIX
    Sistema: Campus CFC LITE V41-DEMO
    ========================================================== */
 
@@ -15,8 +15,9 @@ app.use(cors());
 const PORT = process.env.PORT || 10000;
 
 /* ==========================================================
-   🔹 Inicialización segura Firebase Admin (Service Account)
+   🔹 Inicialización segura Firebase Admin (con projectId manual)
    ========================================================== */
+let db;
 try {
   const serviceAccount = JSON.parse(
     readFileSync("/etc/secrets/firebase-key.json", "utf8")
@@ -24,14 +25,14 @@ try {
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    projectId: serviceAccount.project_id || "cfc-lock-firebase",
   });
 
-  console.log("🟢 Firebase Admin inicializado (Service Account)");
+  db = admin.firestore();
+  console.log("🟢 Firebase Admin inicializado (con projectId manual)");
 } catch (err) {
   console.error("❌ Error al inicializar Firebase Admin:", err);
 }
-
-const db = admin.firestore();
 
 /* ==========================================================
    🧠 Estado local de sesiones (email → device_id)
@@ -39,53 +40,71 @@ const db = admin.firestore();
 const sessions = new Map();
 
 /* ==========================================================
-   🔹 /login — Detecta duplicado y actualiza Firestore en modo directo
+   🔹 /login — Detecta duplicado y fuerza cierre anterior
    ========================================================== */
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
 
-  if (!email || !device_id) {
+  if (!email || !device_id)
     return res.status(400).json({ error: "missing data" });
-  }
 
   const prevDevice = sessions.get(email);
 
-  // 🔥 Si hay duplicado → invalidar anterior
   if (prevDevice && prevDevice !== device_id) {
     console.log(`🚨 Duplicado detectado para ${email}`);
 
     try {
-      const docRef = db.collection("licenses").doc(email);
-      await docRef.update({
-        active_session: false,
-        last_active: new Date(),
-        session_force_closed: true,
-      });
-      console.log(`⚡ Firestore actualizado (active_session=false) para ${email}`);
+      const ref = db.collection("licenses").doc(email);
+      await ref.set(
+        {
+          active_session: false,
+          session_force_closed: true,
+          last_active: new Date(),
+        },
+        { merge: true }
+      );
+      console.log(`⚡ Firestore actualizado: active_session=false`);
     } catch (err) {
-      console.error("❌ Error directo al escribir Firestore:", err);
+      console.error("❌ Error al actualizar Firestore:", err);
     }
   }
 
-  // Registrar nueva sesión
   sessions.set(email, device_id);
   res.json({ status: "ok" });
 });
 
 /* ==========================================================
-   🔹 /check-session — Validación remota
+   🔹 /check-session — Verifica si la sesión sigue activa
    ========================================================== */
-app.get("/check-session", (req, res) => {
+app.get("/check-session", async (req, res) => {
   const { email, device_id } = req.query;
-  const current = sessions.get(email);
 
-  if (!current) return res.json({ status: "invalid" });
-  if (current !== device_id) {
-    console.log(`🚨 Sesión expirada: ${email}`);
-    return res.json({ status: "expired" });
+  if (!email || !device_id)
+    return res.status(400).json({ error: "missing params" });
+
+  try {
+    const ref = db.collection("licenses").doc(email);
+    const snap = await ref.get();
+    if (!snap.exists) return res.json({ status: "invalid" });
+
+    const data = snap.data();
+
+    // Si Firestore marca sesión forzada cerrada
+    if (data.session_force_closed === true) {
+      console.log(`🚨 Sesión forzada a cerrar (${email})`);
+      return res.json({ status: "expired" });
+    }
+
+    // Si el device no coincide
+    if (data.device_id && data.device_id !== device_id) {
+      return res.json({ status: "expired" });
+    }
+
+    return res.json({ status: "valid" });
+  } catch (err) {
+    console.error("⚠️ Error en /check-session:", err);
+    res.status(500).json({ error: "server error" });
   }
-
-  return res.json({ status: "valid" });
 });
 
 /* ==========================================================
@@ -108,5 +127,5 @@ app.post("/heartbeat", (req, res) => {
    🚀 Servidor
    ========================================================== */
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V64 activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy V65 activo en puerto ${PORT}`)
 );
