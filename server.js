@@ -1,5 +1,5 @@
 /* ==========================================================
-   ✅ CFC_LOCK_PROXY_V63.0_FIRESTORE_CREDENTIAL_FIX
+   ✅ CFC_LOCK_PROXY_V64.0_FIRESTORE_DIRECT_WRITE_FIX
    Sistema: Campus CFC LITE V41-DEMO
    ========================================================== */
 
@@ -15,7 +15,7 @@ app.use(cors());
 const PORT = process.env.PORT || 10000;
 
 /* ==========================================================
-   🔹 Inicialización segura Firebase Admin (con credenciales locales)
+   🔹 Inicialización segura Firebase Admin (Service Account)
    ========================================================== */
 try {
   const serviceAccount = JSON.parse(
@@ -34,34 +34,40 @@ try {
 const db = admin.firestore();
 
 /* ==========================================================
-   🧠 Estado de sesiones en memoria
+   🧠 Estado local de sesiones (email → device_id)
    ========================================================== */
 const sessions = new Map();
 
 /* ==========================================================
-   🔹 /login — Registrar y cerrar duplicados
+   🔹 /login — Detecta duplicado y actualiza Firestore en modo directo
    ========================================================== */
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
+
+  if (!email || !device_id) {
+    return res.status(400).json({ error: "missing data" });
+  }
+
   const prevDevice = sessions.get(email);
 
+  // 🔥 Si hay duplicado → invalidar anterior
   if (prevDevice && prevDevice !== device_id) {
     console.log(`🚨 Duplicado detectado para ${email}`);
 
     try {
-      await db.collection("licenses").doc(email).set(
-        {
-          active_session: false,
-          last_active: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const docRef = db.collection("licenses").doc(email);
+      await docRef.update({
+        active_session: false,
+        last_active: new Date(),
+        session_force_closed: true,
+      });
       console.log(`⚡ Firestore actualizado (active_session=false) para ${email}`);
     } catch (err) {
-      console.error("❌ Error al actualizar Firestore:", err);
+      console.error("❌ Error directo al escribir Firestore:", err);
     }
   }
 
+  // Registrar nueva sesión
   sessions.set(email, device_id);
   res.json({ status: "ok" });
 });
@@ -102,5 +108,5 @@ app.post("/heartbeat", (req, res) => {
    🚀 Servidor
    ========================================================== */
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V63 activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy V64 activo en puerto ${PORT}`)
 );
