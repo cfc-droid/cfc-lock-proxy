@@ -1,37 +1,88 @@
+// ==========================================================
+// ✅ CFC_LOCK_PROXY_SERVER_V57.5_RENDER_READY
+// Backend Node.js + Express + Firebase
+// Función: Maneja sesiones únicas + heartbeats del Campus CFC
+// Auditoría QA-SYNC — 2025-11-12
+// ==========================================================
+
 import express from "express";
 import cors from "cors";
-import { initializeApp, applicationDefault } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import admin from "firebase-admin";
 
+// ==========================================================
+// 🔹 Inicialización de Express
+// ==========================================================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-initializeApp({ credential: applicationDefault() });
-const db = getFirestore();
+// ==========================================================
+// 🔹 Inicialización de Firebase Admin
+// ==========================================================
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+  });
+}
+const db = admin.firestore();
 
-// Endpoint principal: verifica si el dispositivo actual sigue siendo válido
+// ==========================================================
+// 🔍 Endpoint principal — Verifica si el dispositivo sigue válido
+// ==========================================================
 app.get("/check-session", async (req, res) => {
-  const { email, device_id } = req.query;
-  if (!email || !device_id) return res.status(400).json({ error: "Missing params" });
+  try {
+    const { email, device_id } = req.query;
+    if (!email || !device_id)
+      return res.status(400).json({ error: "Missing params" });
 
-  const ref = db.collection("licenses").doc(email);
-  const snap = await ref.get();
-  if (!snap.exists) return res.json({ status: "invalid" });
+    const ref = db.collection("licenses").doc(email);
+    const snap = await ref.get();
+    if (!snap.exists) return res.json({ status: "invalid" });
 
-  const data = snap.data();
-  res.json({ status: data.device_id === device_id ? "valid" : "invalid" });
+    const data = snap.data();
+    const status = data.device_id === device_id ? "valid" : "invalid";
+    res.json({ status });
+  } catch (err) {
+    console.error("❌ Error en /check-session:", err);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
-// Endpoint secundario: registra heartbeats
+// ==========================================================
+// 💓 Endpoint secundario — Registra heartbeats
+// ==========================================================
 app.post("/heartbeat", async (req, res) => {
-  const { email, device_id } = req.body;
-  if (!email || !device_id) return res.status(400).json({ error: "Missing body" });
-  await db.collection("licenses").doc(email).set({
-    device_id,
-    last_active: new Date(),
-  }, { merge: true });
-  res.json({ ok: true });
+  try {
+    const { email, device_id } = req.body;
+    if (!email || !device_id)
+      return res.status(400).json({ error: "Missing body" });
+
+    const ref = db.collection("licenses").doc(email);
+    await ref.set(
+      {
+        device_id,
+        last_active: new Date(),
+        active: true,
+      },
+      { merge: true }
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ Error en /heartbeat:", err);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
-app.listen(3000, () => console.log("🔥 CFC Lock Proxy activo en puerto 3000"));
+// ==========================================================
+// 🩺 Healthcheck (Render usa esto para monitorear el servicio)
+// ==========================================================
+app.get("/healthz", (req, res) => res.status(200).send("ok"));
+
+// ==========================================================
+// 🚀 Iniciar servidor
+// ==========================================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () =>
+  console.log(`✅ CFC Lock Proxy activo en puerto ${PORT}`)
+);
