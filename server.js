@@ -100,13 +100,6 @@ app.get("/check-session", async (req, res) => {
 });
 
 /* ==========================================================
-   🚀 Servidor
-   ========================================================== */
-app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V69 activo en puerto ${PORT}`)
-);
-
-/* ==========================================================
    🔥 /heartbeat — Mantener la sesión viva
    ========================================================== */
 app.post("/heartbeat", async (req, res) => {
@@ -134,3 +127,10 @@ app.post("/heartbeat", async (req, res) => {
     return res.status(500).json({ error: "server_error" });
   }
 });
+
+/* ==========================================================
+   🚀 Servidor
+   ========================================================== */
+app.listen(PORT, "0.0.0.0", () =>
+  console.log(`⚡ CFC Lock Proxy V69 activo en puerto ${PORT}`)
+);
