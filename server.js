@@ -105,3 +105,32 @@ app.get("/check-session", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`⚡ CFC Lock Proxy V69 activo en puerto ${PORT}`)
 );
+
+/* ==========================================================
+   🔥 /heartbeat — Mantener la sesión viva
+   ========================================================== */
+app.post("/heartbeat", async (req, res) => {
+  try {
+    const { email, device_id } = req.body;
+
+    if (!email || !device_id) {
+      return res.status(400).json({ error: "missing email or device_id" });
+    }
+
+    const ref = db.collection("licenses").doc(email);
+
+    await ref.set(
+      {
+        last_active: Date.now(),
+        active_session: true,
+        session_force_closed: false,
+      },
+      { merge: true }
+    );
+
+    return res.json({ status: "alive" });
+  } catch (err) {
+    console.error("❌ Heartbeat ERROR:", err);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
