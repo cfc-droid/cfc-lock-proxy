@@ -1,5 +1,5 @@
 /* ==========================================================
-   ✅ CFC_LOCK_PROXY_V69.0_REALFIX
+   ✅ CFC_LOCK_PROXY_V69.1_COLLECTION_FIX
    Sistema: Campus CFC LITE V41-DEMO
    ========================================================== */
 import express from "express";
@@ -19,11 +19,15 @@ const PROJECT_ID = process.env.PROJECT_ID || "cfc-lock-firebase";
    ========================================================== */
 let db;
 try {
-  const serviceAccount = JSON.parse(readFileSync("/etc/secrets/firebase-key.json", "utf8"));
+  const serviceAccount = JSON.parse(
+    readFileSync("/etc/secrets/firebase-key.json", "utf8")
+  );
+
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     projectId: PROJECT_ID,
   });
+
   db = admin.firestore();
   console.log("🟢 Firebase Admin inicializado correctamente (Render ENV)");
 } catch (err) {
@@ -36,15 +40,18 @@ try {
 app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
   if (!email || !device_id) return res.status(400).json({ error: "missing data" });
-  const ref = db.collection("licenses").doc(email);
+
+  const ref = db.collection("sessions").doc(email);   // 🔥 FIX
   const now = Date.now();
 
   try {
     const snap = await ref.get();
+
     if (snap.exists) {
       const data = snap.data();
       if (data.active_session && data.device_id !== device_id) {
         console.log(`🚨 Duplicado detectado para ${email}`);
+
         await ref.update({
           active_session: false,
           session_force_closed: true,
@@ -76,22 +83,27 @@ app.post("/login", async (req, res) => {
    ========================================================== */
 app.get("/check-session", async (req, res) => {
   const { email, device_id } = req.query;
-  if (!email || !device_id) return res.status(400).json({ error: "missing params" });
+  if (!email || !device_id)
+    return res.status(400).json({ error: "missing params" });
 
   try {
-    const ref = db.collection("licenses").doc(email);
+    const ref = db.collection("sessions").doc(email);   // 🔥 FIX
     const snap = await ref.get();
+
     if (!snap.exists) return res.json({ status: "invalid" });
 
     const data = snap.data();
+
     if (!data.active_session || data.session_force_closed) {
       console.log(`🚨 Sesión expirada para ${email}`);
       return res.json({ status: "expired" });
     }
+
     if (data.device_id !== device_id) {
       console.log(`🚨 Sesión transferida a otro dispositivo: ${email}`);
       return res.json({ status: "expired" });
     }
+
     return res.json({ status: "valid" });
   } catch (err) {
     console.error("⚠️ Error en /check-session:", err);
@@ -110,7 +122,7 @@ app.post("/heartbeat", async (req, res) => {
       return res.status(400).json({ error: "missing email or device_id" });
     }
 
-    const ref = db.collection("licenses").doc(email);
+    const ref = db.collection("sessions").doc(email);   // 🔥 FIX
 
     await ref.set(
       {
@@ -132,5 +144,5 @@ app.post("/heartbeat", async (req, res) => {
    🚀 Servidor
    ========================================================== */
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V69 activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy V69.1 FIX activo en puerto ${PORT}`)
 );
