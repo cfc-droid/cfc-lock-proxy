@@ -1,5 +1,5 @@
 /* ==========================================================
-   ✅ CFC_LOCK_PROXY_V69.1_COLLECTION_FIX
+   ✅ CFC_LOCK_PROXY_V69.2_CORS_FIX
    Sistema: Campus CFC LITE V41-DEMO
    ========================================================== */
 import express from "express";
@@ -9,7 +9,24 @@ import { readFileSync } from "fs";
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+
+/* ==========================================================
+   🔥 CORS — PERMITIR CLOUDLFARE
+   ========================================================== */
+app.use(
+  cors({
+    origin: [
+      "https://campus-cfc-lite-v41-main-demo.pages.dev",
+      "https://campus.cfc.com",
+      "http://localhost:4173",
+      "http://localhost:5173"
+    ],
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+    credentials: true,
+    optionsSuccessStatus: 200
+  })
+);
 
 const PORT = process.env.PORT || 10000;
 const PROJECT_ID = process.env.PROJECT_ID || "cfc-lock-firebase";
@@ -41,7 +58,7 @@ app.post("/login", async (req, res) => {
   const { email, device_id } = req.body;
   if (!email || !device_id) return res.status(400).json({ error: "missing data" });
 
-  const ref = db.collection("sessions").doc(email);   // 🔥 FIX
+  const ref = db.collection("sessions").doc(email);
   const now = Date.now();
 
   try {
@@ -79,7 +96,7 @@ app.post("/login", async (req, res) => {
 });
 
 /* ==========================================================
-   🔍 /check-session — Respuesta exacta según Firestore
+   🔍 /check-session
    ========================================================== */
 app.get("/check-session", async (req, res) => {
   const { email, device_id } = req.query;
@@ -87,7 +104,7 @@ app.get("/check-session", async (req, res) => {
     return res.status(400).json({ error: "missing params" });
 
   try {
-    const ref = db.collection("sessions").doc(email);   // 🔥 FIX
+    const ref = db.collection("sessions").doc(email);
     const snap = await ref.get();
 
     if (!snap.exists) return res.json({ status: "invalid" });
@@ -122,7 +139,7 @@ app.post("/heartbeat", async (req, res) => {
       return res.status(400).json({ error: "missing email or device_id" });
     }
 
-    const ref = db.collection("sessions").doc(email);   // 🔥 FIX
+    const ref = db.collection("sessions").doc(email);
 
     await ref.set(
       {
@@ -144,5 +161,5 @@ app.post("/heartbeat", async (req, res) => {
    🚀 Servidor
    ========================================================== */
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`⚡ CFC Lock Proxy V69.1 FIX activo en puerto ${PORT}`)
+  console.log(`⚡ CFC Lock Proxy V69.2 CORS FIX activo en puerto ${PORT}`)
 );
