@@ -163,3 +163,54 @@ app.post("/heartbeat", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`⚡ CFC Lock Proxy V69.2 CORS FIX activo en puerto ${PORT}`)
 );
+
+/* ==========================================================
+   🔄 /update-session — Heartcore Sync
+   ========================================================== */
+app.post("/update-session", async (req, res) => {
+  try {
+    const { email, device_id, session_id } = req.body;
+
+    if (!email || !device_id || !session_id) {
+      return res.status(400).json({ error: "missing parameters" });
+    }
+
+    const ref = db.collection("sessions").doc(email);
+    const snap = await ref.get();
+    const now = Date.now();
+
+    // Si no existe → inválido
+    if (!snap.exists) {
+      return res.json({ status: "invalid" });
+    }
+
+    const data = snap.data();
+
+    // Si la sesión está marcada como cerrada → expulsar
+    if (!data.active_session || data.session_force_closed) {
+      return res.json({ status: "invalid" });
+    }
+
+    // Si device_id cambió → expulsar
+    if (data.device_id !== device_id) {
+      console.log(`🚨 update-session: otro device tomó control de ${email}`);
+      return res.json({ status: "invalid" });
+    }
+
+    // Actualizar timestamps
+    await ref.set(
+      {
+        last_active: now,
+        updated_at_iso: new Date(now).toISOString(),
+        active_session: true,
+      },
+      { merge: true }
+    );
+
+    return res.json({ status: "ok" });
+
+  } catch (err) {
+    console.error("❌ Error en /update-session:", err);
+    return res.status(500).json({ error: "server error" });
+  }
+});
